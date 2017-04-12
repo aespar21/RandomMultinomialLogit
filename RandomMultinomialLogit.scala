@@ -21,8 +21,7 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
   var oobEval: Boolean = false
 
   var PCCArray = ArrayBuffer[Double]()
-  var wPCCArray = ArrayBuffer[Double]()
-  var randomModels = ArrayBuffer[LogisticRegressionModel]()
+  var wPCCArray = ArrayBuffer[Double]()g
 
   /**
     * Specify fraction of the training data used for model building (default is 1.0)
@@ -81,7 +80,7 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
       .setNumClasses(numClasses)
 
     // Initiate list to save models
-    // val randomModels = new Array[LogisticRegressionModel](numSubsamples)
+    val randomModels = new Array[LogisticRegressionModel](numSubsamples)
 
     // Determine total number of features once
     val allFeat = Array.range(0, input.first().features.size)
@@ -106,7 +105,7 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
 
       // Train model
       val newRandomModel = RMLModel.run(bootstrap)
-      randomModels += newRandomModel
+      randomModels(i) = newRandomModel
 
       if (oobEval) {
         val newMetrics = oobEvaluation(input, bootstrap, weights, newRandomModel)
@@ -154,7 +153,7 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
       (PCC, wPCC)
     }
 
-    randomModels.toArray
+    randomModels
   }
 
   /**
@@ -163,20 +162,22 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
     * adjusted majority vote returns the class with the highest mean
     * response probability over all models.
     *
+    * @param input: Array of LogisticRegressionModel (= ensemble of random models)
     * @param testData: Vector of features
     * @param adjusted: Use adjusted majority vote (true) or regular majority vote (false)
     * @return Class index with majority vote
     */
   def aggregate(
+                 input: Array[LogisticRegressionModel],
                  testData: Vector,
                  adjusted: Boolean = false): Double = {
 
     if (!adjusted){
       // Return most occurring class id
-      randomModels.map(x => x.predict(testData)).groupBy(identity).maxBy(_._2.length)._1
+      input.map(x => x.predict(testData)).groupBy(identity).maxBy(_._2.length)._1
     } else {
       // Return class with highest mean probability
-      randomModels
+      input
         .map(x => ClassificationUtility.predictPoint(testData, x)._2)
         .reduce((a, b) => a.zip(b).map(x => x._1 + x._2))
         .zipWithIndex
@@ -187,10 +188,13 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
   /**
     * Take a subsample of n best models based on PCC performance.
     *
+    * @param input: Array of LogisticRegressionModel (= ensemble of random models)
     * @param n: How many random models to select (default is 1, i.e. single best)
     */
-  def takeBest(n: Int = 1): Array[LogisticRegressionModel] = {
-    randomModels = PCC().zip(randomModels).sortBy(-_._1).map(_._2).take(n)
+  def takeBest(
+                input: Array[LogisticRegressionModel],
+                n: Int = 1): Array[LogisticRegressionModel] = {
+    PCC().zip(input).sortBy(-_._1).map(_._2).take(n)
   }
 
 }
