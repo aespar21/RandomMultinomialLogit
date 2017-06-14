@@ -6,6 +6,7 @@ import org.apache.spark.mllib.classification.{LogisticRegressionModel, LogisticR
 import org.apache.spark.mllib.linalg.{Vector, Vectors}
 import scala.util.Random
 import scala.collection.mutable.ArrayBuffer
+import org.apache.spark.mllib.util.MLUtils
 
 /**
   * Random Multinomial Logit Algorithm:
@@ -19,9 +20,21 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
   var subSamplingRate: Double = 1.0
   var withReplacement: Boolean = true
   var oobEval: Boolean = false
+  var numSubSamples: Int = 10
+
+  var randomFeaturesArray = new Array[Array[Int]](numSubSamples)
 
   var PCCArray = ArrayBuffer[Double]()
-  var wPCCArray = ArrayBuffer[Double]()g
+  var wPCCArray = ArrayBuffer[Double]()
+
+  /**
+    * Specify number of subsamples to take = number of models in the ensemble
+    */
+  def setNumSubSamples(value: Int): this.type = {
+    this.numSubSamples = value
+    this.randomFeaturesArray = new Array[Array[Int]](numSubSamples)
+    this
+  }
 
   /**
     * Specify fraction of the training data used for model building (default is 1.0)
@@ -61,18 +74,20 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
     wPCCArray.toArray
   }
 
+  def randomFeatures(): Array[Array[Int]] = {
+    randomFeaturesArray
+  }
+
   /**
     * Train a sequence of numSubsamples Logistic Regression-models.
     * @param input: Training data = RDD of LabeledPoint
     * @param numClasses: Number of classes
     * @param numFeatures: Number of features to randomly select for each model
-    * @param numSubsamples: Number of subsamples of the input RDD to take = number of models in the forest
     */
   def runSequence(
                  input: RDD[LabeledPoint],
                  numClasses: Int,
-                 numFeatures: Int,
-                 numSubsamples: Int
+                 numFeatures: Int
                  ): Array[LogisticRegressionModel] = {
 
     // Specify model
@@ -80,7 +95,7 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
       .setNumClasses(numClasses)
 
     // Initiate list to save models
-    val randomModels = new Array[LogisticRegressionModel](numSubsamples)
+    val randomModels = new Array[LogisticRegressionModel](this.numSubSamples)
 
     // Determine total number of features once
     val allFeat = Array.range(0, input.first().features.size)
@@ -93,15 +108,16 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
     // Weights to determine wPCC
     val weights = relFreq.map(x => (1 - x) / relFreq.map(x => 1 - x).sum)
 
-    for (i <- List.range(0, numSubsamples)) {
+    for (i <- List.range(0, this.numSubSamples)) {
       // Bootstrap sample
-      val bootstrap = input.sample(withReplacement = withReplacement, fraction = subSamplingRate)
+      var bootstrap = input.sample(withReplacement = withReplacement, fraction = subSamplingRate)
 
       // Select random set of features and save in featureList
       val subsetFeat = Random.shuffle(allFeat.toList).take(numFeatures).toArray
+      randomFeaturesArray(i) = subsetFeat
 
-      bootstrap.foreach(observation => LabeledPoint(observation.label,
-        Vectors.dense(subsetFeat.map(observation.features(_)))))
+      bootstrap = bootstrap.map(row => LabeledPoint(row.label,
+        Vectors.dense(subsetFeat.map(row.features(_)))))
 
       // Train model
       val newRandomModel = RMLModel.run(bootstrap)
@@ -174,7 +190,9 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
 
     if (!adjusted){
       // Return most occurring class id
-      input.map(x => x.predict(testData)).groupBy(identity).maxBy(_._2.length)._1
+      //input.map(x => x.predict(testData)).groupBy(identity).maxBy(_._2.length)._1
+      input.zip(this.randomFeaturesArray).map(x => x._1.predict(Vectors.dense(x._2.map(testData(_)))))
+        .groupBy(identity).maxBy(_._2.length)._1
     } else {
       // Return class with highest mean probability
       input
@@ -195,6 +213,32 @@ object RandomMultinomialLogit extends LogisticRegressionWithLBFGS {
                 input: Array[LogisticRegressionModel],
                 n: Int = 1): Array[LogisticRegressionModel] = {
     PCC().zip(input).sortBy(-_._1).map(_._2).take(n)
+  }
+
+  def kFoldCrossValidate(
+                     input: RDD[LabeledPoint],
+                     numClasses: Int,
+                     numFeatures: Int,
+                     k: Int = 10,
+                     seed: Int): Array[Double] = {
+    val accuracyArray = ArrayBuffer[Double]()
+    val folds = MLUtils.kFold(input, numFolds = k, seed = seed)
+
+    folds.zipWithIndex.foreach { case ((training, validation), splitIndex) =>
+      val trainingDataset = training.cache()
+      val validationDataset = validation.cache()
+      // Train RMNL
+      val models = runSequence(trainingDataset, numClasses, numFeatures)
+      trainingDataset.unpersist()
+      // Determine accuracy on test set
+      val labelsAndPreds = validationDataset.map { point =>
+        val prediction = RandomMultinomialLogit.aggregate(models, point.features)
+        (point.label, prediction)}
+      validationDataset.unpersist()
+
+      accuracyArray += labelsAndPreds.filter(r => r._1 == r._2).count.toDouble / validationDataset.count()
+    }
+    accuracyArray.toArray
   }
 
 }
