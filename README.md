@@ -12,3 +12,31 @@ To make predictions for new instances, the results of all models in the ensemble
 * *Adjusted majority vote* is an extension of the latter by using the response probabilities for each class of each model in the ensemble. The class with the highest mean repsonse probability over all models in the ensemble will be assigned to the new observation
 
 ## RandomMultinomialLogit: Minimal Example
+A random multinomial logit-model is initiated as follows. Also specify the number of individual models to be constructed in the model in this statement, in this case 10. 
+```scala
+val model = new RMNL()
+  .setNumSubSamples(10)
+```
+The model is then fitted to a set of training data (available as an RDD of LabeledPoint). Also specify the total number of classes and the number of random features to select in each individual model.
+```scala
+val fit = model.runSequence(
+  input = train,
+  numClasses = 3,
+  numFeatures = 50)
+```
+Aggregating the predictions of all constituent models is possible as follows. Test data should be contained in an RDD of LabeledPoint. The adjusted-Boolean indicated whether to aggregate using majority vote or adjusted majority vote (as explained above).
+```scala
+val predictions = model.aggregate(
+  input = fit,
+  testData = test,
+  adjusted = true)
+```
+Cross-validation is also available. Specify the number of folds to use, the total number of classes, the number of random features to select in each individual model, and whether to aggregate using majority vote or adjusted majority vote. Also provide a seed to use for splitting the data in `k`folds.
+```scala
+val CV_accuracy = model.kFoldCrossValidate(
+  input = data,
+  numClasses = 3,
+  k = 10,
+  adjusted = false,
+  seed = 12345)
+```
