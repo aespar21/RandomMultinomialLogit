@@ -31,7 +31,7 @@ val predictions = model.aggregate(
   testData = test,
   adjusted = true)
 ```
-Cross-validation is also available. Specify the number of folds to use, the total number of classes, the number of random features to select in each individual model, and whether to aggregate using majority vote or adjusted majority vote. Also provide a seed to use for splitting the data in `k`folds.
+Cross-validation is also available. Specify the number of folds to use, the total number of classes, the number of random features to select in each individual model, and whether to aggregate using majority vote or adjusted majority vote. Also provide a seed to use for splitting the data in `k` folds.
 ```scala
 val CV_accuracy = model.kFoldCrossValidate(
   input = data,
