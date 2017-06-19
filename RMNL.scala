@@ -160,8 +160,7 @@ class RMNL {
       .sortBy(x => x._1)
       .map(x => x._2.toDouble / input.count())
     // Weights to determine wPCC
-    val weights = relFreq.map(x => (1 - x) /
-      relFreq.map(x => 1 - x).sum)
+    val weights = relFreq.map(x => 1 - x)
 
     for (i <- List.range(0, this.numSubSamples)) {
       // Bootstrap sample
@@ -214,31 +213,24 @@ class RMNL {
       // Out-of-bag data
       val oob = input_subsetFeat.subtract(bootstrap)
 
-      // Determine absolute class frequencies in out-of-bag sample
-      val absOOBFreq = oob
-        .map(x => x.label)
-        .countByValue().toArray
-        .sortBy(x => x._1)
-        .map(x => x._2.toInt)
-
       val predictions = model.transform(oob.toDF())
-      //predictions.show()
       val evaluator = new MulticlassClassificationEvaluator()
         .setLabelCol("label")
         .setPredictionCol("prediction")
         .setMetricName("accuracy")
       val PCC = evaluator.evaluate(predictions)
 
-      // Needs testing!
-      //val wPCC = labelAndPreds
-      // .filter(r => r._1 == r._2).countByKey()
-      // .toArray.sortBy(x => x._1)
-      // .map(x => x._2.toDouble / absOOBFreq(x._1.toInt) * weights(x._1.toInt))
-      // .sum
-      val wPCC = 0.0
+      val wPCC = predictions.select("label", "prediction").rdd
+        .map(r => (r.get(0), r.get(1), r.get(0) == r.get(1)))
+        .groupBy(r => r._1)
+        .map(label => (label._1,
+          label._2.map(c => if (c._3) 1.0 else 0.0).sum /
+            label._2.toArray.length))
+        .map(r => r._2 * weights(r._1.toString.dropRight(2).toInt))
+        .sum() / numClasses
+
       (PCC, wPCC)
     }
-
     randomModels
   }
 
